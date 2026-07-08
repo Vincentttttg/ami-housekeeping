@@ -31,8 +31,42 @@ On each scheduled run the function:
 ## Prerequisites
 
 - Node.js 22+
-- [AWS SAM CLI](https://docs.aws.amazon.com/serverless-application-model/latest/developerguide/install-sam-cli.html)
-- AWS credentials configured (`aws configure` or SSO)
+- [AWS CLI v2](https://awscli.amazonaws.com/AWSCLIV2.msi) and [AWS SAM CLI](https://docs.aws.amazon.com/serverless-application-model/latest/developerguide/install-sam-cli.html) (Windows: `winget install Amazon.AWSCLI Amazon.SAM-CLI`, or the MSI installers)
+- AWS credentials configured — see below
+
+## Configure AWS credentials (one-time)
+
+Deploying needs credentials on your machine; without them `sam deploy` fails with
+`Error: Unable to locate credentials`.
+
+1. **Create an access key** in the AWS console:
+   - Sign in → **IAM** → **Users** → select your user → **Security credentials** tab → **Create access key** → choose *Command Line Interface (CLI)*.
+   - Copy both the **Access key ID** and the **Secret access key** — the secret is shown only once.
+   - Do **not** create access keys for the root account. If you only have the root login, first create an IAM user (IAM → Users → Create user, attach the `AdministratorAccess` policy) and create the key on that user.
+
+2. **Store them with the AWS CLI:**
+
+   ```bash
+   aws configure
+   # AWS Access Key ID:     <paste>
+   # AWS Secret Access Key: <paste>
+   # Default region name:   ap-southeast-1   # must be the region where your AMIs live
+   # Default output format: json
+   ```
+
+   This writes to `~/.aws/credentials` and `~/.aws/config` — outside the project, so nothing sensitive can end up in git. Never paste keys into project files.
+
+3. **Verify:**
+
+   ```bash
+   aws sts get-caller-identity
+   ```
+
+   If it prints your account ID and user ARN, you're authenticated.
+
+Note these credentials are only used at **deploy time**, from your machine. The deployed
+Lambda authenticates with its own IAM execution role (created by the template) — your
+access key never leaves your machine.
 
 ## Develop
 
