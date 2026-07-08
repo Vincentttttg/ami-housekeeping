@@ -6,7 +6,10 @@
   "scripts": {
     "build": "esbuild src/index.ts --bundle --platform=node --target=node22 --outfile=dist/index.js",
     "typecheck": "tsc --noEmit",
-    "package": "npm run build && cd dist && bestzip ../function.zip index.js"
+    "deploy:first": "sam build && sam deploy --guided",
+    "rehearse": "aws lambda invoke --function-name ami-housekeeping out.json && type out.json",
+    "arm": "sam build && sam deploy --parameter-overrides DryRun=false",
+    "disarm": "sam build && sam deploy --parameter-overrides DryRun=true"
   },
   "dependencies": {
     "@aws-sdk/client-ec2": "^3.750.0",

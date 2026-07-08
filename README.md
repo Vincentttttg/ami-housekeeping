@@ -44,6 +44,19 @@ npm run build       # bundle to dist/index.js with esbuild
 
 ## Deploy
 
+The full lifecycle is wrapped in npm scripts:
+
+```bash
+npm run deploy:first   # first time only: sam build + interactive guided deploy (dry-run mode)
+npm run rehearse       # invoke the function once and print the result — review the delete list
+npm run arm            # happy with the rehearsal? redeploy with DryRun=false (real deletions)
+npm run disarm         # switch back to dry-run mode at any time
+```
+
+`arm` and `disarm` are the **only** two deploy commands after the first — each one rebuilds, redeploys, and sets the DryRun flag explicitly, so the command you run is always the mode you get. For routine code changes, rerun whichever mode you're in (normally `npm run arm`).
+
+Or run the underlying commands directly:
+
 ```bash
 sam build
 sam deploy --guided   # first time; afterwards just `sam deploy`

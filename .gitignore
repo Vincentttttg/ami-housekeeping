@@ -2,5 +2,6 @@ node_modules/
 dist/
 .aws-sam/
 function.zip
+out.json
 *.log
 samconfig.toml
