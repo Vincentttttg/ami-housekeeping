@@ -1,0 +1,20 @@
+{
+  "name": "ami-housekeeping",
+  "version": "1.0.0",
+  "description": "Lambda housekeeping job that deregisters obsolete AMIs tagged App=POC-Housekeeping and deletes their backing snapshots",
+  "main": "dist/index.js",
+  "scripts": {
+    "build": "esbuild src/index.ts --bundle --platform=node --target=node22 --outfile=dist/index.js",
+    "typecheck": "tsc --noEmit",
+    "package": "npm run build && cd dist && bestzip ../function.zip index.js"
+  },
+  "dependencies": {
+    "@aws-sdk/client-ec2": "^3.750.0",
+    "esbuild": "^0.25.0"
+  },
+  "devDependencies": {
+    "@types/aws-lambda": "^8.10.145",
+    "@types/node": "^22.10.0",
+    "typescript": "^5.7.0"
+  }
+}

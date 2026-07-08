@@ -1,0 +1,85 @@
+AWSTemplateFormatVersion: "2010-09-09"
+Transform: AWS::Serverless-2016-10-31
+Description: >
+  Housekeeping job: EventBridge Scheduler triggers a Lambda that deregisters
+  obsolete AMIs tagged App=POC-Housekeeping and deletes their backing snapshots.
+
+Parameters:
+  KeepLatest:
+    Type: Number
+    Default: 3
+    Description: Number of most recent AMIs to keep; older ones are cleaned up.
+  DryRun:
+    Type: String
+    Default: "true"
+    AllowedValues: ["true", "false"]
+    Description: When "true", only logs what would be deleted.
+  ScheduleExpression:
+    Type: String
+    Default: cron(0 1 * * ? *)
+    Description: EventBridge Scheduler cron/rate expression (default is daily at 01:00 UTC).
+
+Resources:
+  AmiHousekeepingFunction:
+    Type: AWS::Serverless::Function
+    Metadata:
+      BuildMethod: esbuild
+      BuildProperties:
+        Minify: true
+        Target: node22
+        EntryPoints:
+          - src/index.ts
+    Properties:
+      FunctionName: ami-housekeeping
+      Handler: index.handler
+      Runtime: nodejs22.x
+      Architectures:
+        - arm64
+      MemorySize: 256
+      Timeout: 300
+      Environment:
+        Variables:
+          TAG_KEY: App
+          TAG_VALUE: POC-Housekeeping
+          KEEP_LATEST: !Ref KeepLatest
+          DRY_RUN: !Ref DryRun
+      Policies:
+        - Statement:
+            - Sid: DescribeIsAccountWide
+              Effect: Allow
+              Action:
+                - ec2:DescribeImages
+                - ec2:DescribeInstances
+              Resource: "*"
+            - Sid: DeregisterTaggedAmisOnly
+              Effect: Allow
+              Action:
+                - ec2:DeregisterImage
+              Resource: !Sub arn:aws:ec2:${AWS::Region}::image/*
+              Condition:
+                StringEquals:
+                  aws:ResourceTag/App: POC-Housekeeping
+            - Sid: DeleteSnapshots
+              Effect: Allow
+              Action:
+                - ec2:DeleteSnapshot
+              Resource: !Sub arn:aws:ec2:${AWS::Region}::snapshot/*
+      Events:
+        NightlyCleanup:
+          Type: ScheduleV2
+          Properties:
+            Name: ami-housekeeping-nightly
+            ScheduleExpression: !Ref ScheduleExpression
+            RetryPolicy:
+              MaximumRetryAttempts: 2
+
+  AmiHousekeepingLogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: /aws/lambda/ami-housekeeping
+      RetentionInDays: 30
+
+Outputs:
+  FunctionArn:
+    Description: ARN of the housekeeping Lambda
+    Value: !GetAtt AmiHousekeepingFunction.Arn
