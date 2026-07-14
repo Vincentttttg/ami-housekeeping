@@ -6,6 +6,15 @@ import {
   paginateDescribeInstances,
   type Image,
 } from "@aws-sdk/client-ec2";
+import type { EventBridgeEvent } from "aws-lambda";
+
+/** Payload of the native "EC2 AMI State Change" EventBridge event. */
+interface AmiStateChangeDetail {
+  ImageId?: string;
+  State?: string;
+}
+
+type AmiStateChangeEvent = EventBridgeEvent<"EC2 AMI State Change", AmiStateChangeDetail>;
 
 const ec2 = new EC2Client({});
 
@@ -19,6 +28,7 @@ const DRY_RUN = (process.env.DRY_RUN ?? "true").toLowerCase() !== "false";
 const INSTANCE_FILTER_CHUNK_SIZE = 100;
 
 export interface CleanupResult {
+  triggerImageId: string | null;
   scanned: number;
   obsolete: number;
   skippedInUse: string[];
@@ -125,12 +135,19 @@ async function deleteImage(image: Image, result: CleanupResult): Promise<void> {
   }
 }
 
-export const handler = async (): Promise<CleanupResult> => {
+export const handler = async (
+  event?: Partial<AmiStateChangeEvent>,
+): Promise<CleanupResult> => {
+  // When triggered by EventBridge this is the AMI that just became available;
+  // on a manual invoke (no event detail) we run a full sweep instead.
+  const triggerImageId = event?.detail?.ImageId ?? null;
+
   console.log(
-    `AMI housekeeping started. Tag ${TAG_KEY}=${TAG_VALUE}, keeping latest ${KEEP_LATEST} AMI(s), dryRun=${DRY_RUN}`,
+    `AMI housekeeping started. Trigger=${triggerImageId ?? "manual"}, tag ${TAG_KEY}=${TAG_VALUE}, keeping latest ${KEEP_LATEST} AMI(s), dryRun=${DRY_RUN}`,
   );
 
   const result: CleanupResult = {
+    triggerImageId,
     scanned: 0,
     obsolete: 0,
     skippedInUse: [],
@@ -142,6 +159,15 @@ export const handler = async (): Promise<CleanupResult> => {
 
   const images = await findTaggedImages();
   result.scanned = images.length;
+
+  // The state-change event fires for every AMI in the account; only act when
+  // the AMI that triggered us carries the housekeeping tag.
+  if (triggerImageId && !images.some((image) => image.ImageId === triggerImageId)) {
+    console.log(
+      `Trigger AMI ${triggerImageId} is not tagged ${TAG_KEY}=${TAG_VALUE}; nothing to do.`,
+    );
+    return result;
+  }
 
   const obsoleteImages = selectObsoleteImages(images);
   result.obsolete = obsoleteImages.length;

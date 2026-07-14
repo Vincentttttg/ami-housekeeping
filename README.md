@@ -1,15 +1,18 @@
 # AMI Housekeeping Lambda
 
-A TypeScript Lambda function, triggered on a schedule by **EventBridge Scheduler**, that cleans up obsolete AMIs tagged `App=POC-Housekeeping`.
+A TypeScript Lambda function that cleans up obsolete AMIs tagged `App=POC-Housekeeping`. It is **event-driven**: an EventBridge rule matches the native `EC2 AMI State Change` event, so the moment a new AMI becomes `available` the function runs and prunes older ones.
 
 ## How it works
 
-On each scheduled run the function:
+When any AMI in the account reaches the `available` state, EventBridge invokes the function, which:
 
 1. Lists all AMIs **owned by this account** with the tag `App=POC-Housekeeping`.
-2. Sorts them by creation date and keeps the latest `KEEP_LATEST` (default **3**); everything older is obsolete.
-3. Skips any obsolete AMI still referenced by a non-terminated EC2 instance.
-4. Deregisters the remaining AMIs and deletes their backing EBS snapshots.
+2. Checks the AMI that triggered the event — if it doesn't carry the tag, exits without touching anything (the event fires for every AMI in the account, not just ours).
+3. Sorts the tagged AMIs by creation date and keeps the latest `KEEP_LATEST` (default **3**); everything older is obsolete.
+4. Skips any obsolete AMI still referenced by a non-terminated EC2 instance.
+5. Deregisters the remaining AMIs and deletes their backing EBS snapshots.
+
+A manual invoke (empty payload, e.g. `npm run rehearse`) skips step 2 and runs a full sweep.
 
 > **Note:** the AMIs themselves must carry the `App=POC-Housekeeping` tag. If you create images from a tagged instance via `CreateImage`, pass `TagSpecifications` (or use the console's "copy tags" option) so the tag lands on the AMI.
 
@@ -99,13 +102,13 @@ sam deploy --guided   # first time; afterwards just `sam deploy`
 This creates:
 
 - The `ami-housekeeping` Lambda (Node.js 22, arm64), bundled by SAM via esbuild.
-- An EventBridge Scheduler schedule (`ami-housekeeping-nightly`, daily at 01:00 UTC by default) with its own invoke role.
+- An EventBridge rule on the default event bus matching `EC2 AMI State Change` events with `State: available`, plus the permission for EventBridge to invoke the function.
 - A least-privilege execution role and a 30-day CloudWatch log group.
 
 Override parameters at deploy time, e.g.:
 
 ```bash
-sam deploy --parameter-overrides DryRun=false KeepLatest=5 "ScheduleExpression=rate(12 hours)"
+sam deploy --parameter-overrides DryRun=false KeepLatest=5
 ```
 
 ## Test manually

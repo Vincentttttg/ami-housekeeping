@@ -1,8 +1,9 @@
 AWSTemplateFormatVersion: "2010-09-09"
 Transform: AWS::Serverless-2016-10-31
 Description: >
-  Housekeeping job: EventBridge Scheduler triggers a Lambda that deregisters
-  obsolete AMIs tagged App=POC-Housekeeping and deletes their backing snapshots.
+  Housekeeping job: whenever a new AMI becomes available, an EventBridge rule
+  triggers a Lambda that keeps the latest AMIs tagged App=POC-Housekeeping and
+  deregisters older ones, deleting their backing snapshots.
 
 Parameters:
   KeepLatest:
@@ -14,10 +15,6 @@ Parameters:
     Default: "true"
     AllowedValues: ["true", "false"]
     Description: When "true", only logs what would be deleted.
-  ScheduleExpression:
-    Type: String
-    Default: cron(0 1 * * ? *)
-    Description: EventBridge Scheduler cron/rate expression (default is daily at 01:00 UTC).
 
 Resources:
   AmiHousekeepingFunction:
@@ -65,11 +62,17 @@ Resources:
                 - ec2:DeleteSnapshot
               Resource: !Sub arn:aws:ec2:${AWS::Region}::snapshot/*
       Events:
-        NightlyCleanup:
-          Type: ScheduleV2
+        AmiBecameAvailable:
+          Type: EventBridgeRule
           Properties:
-            Name: ami-housekeeping-nightly
-            ScheduleExpression: !Ref ScheduleExpression
+            Pattern:
+              source:
+                - aws.ec2
+              detail-type:
+                - EC2 AMI State Change
+              detail:
+                State:
+                  - available
             RetryPolicy:
               MaximumRetryAttempts: 2
 
