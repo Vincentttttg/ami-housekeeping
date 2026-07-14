@@ -17,37 +17,57 @@ Parameters:
     Description: When "true", only logs what would be deleted.
 
 Resources:
+  # Logical ID: how other parts of THIS template refer to the function
+  # (e.g. !GetAtt AmiHousekeepingFunction.Arn in Outputs). Not its AWS name.
   AmiHousekeepingFunction:
+    # SAM shorthand type. During deploy the Transform expands it into the raw
+    # resources: AWS::Lambda::Function + AWS::IAM::Role + the event wiring.
     Type: AWS::Serverless::Function
+
+    # Metadata is read by `sam build` on your machine, not by AWS.
     Metadata:
-      BuildMethod: esbuild
+      BuildMethod: esbuild        # let SAM bundle the TypeScript with esbuild
       BuildProperties:
-        Minify: true
-        Target: node22
+        Minify: true              # shrink the bundle (smaller upload, same behavior)
+        Target: node22            # emit JS the Node 22 runtime understands
         EntryPoints:
-          - src/index.ts
+          - src/index.ts          # start bundling from this file, follow its imports
+
     Properties:
-      FunctionName: ami-housekeeping
-      Handler: index.handler
-      Runtime: nodejs22.x
+      FunctionName: ami-housekeeping  # actual name in AWS (console, CLI invoke, log group)
+      Handler: index.handler          # file.exportedFunction to call: dist index.js -> export handler
+      Runtime: nodejs22.x             # language runtime Lambda boots for us
       Architectures:
-        - arm64
-      MemorySize: 256
-      Timeout: 300
+        - arm64                       # Graviton CPUs: ~20% cheaper than x86, same code
+      MemorySize: 256                 # MB of RAM; CPU share scales with it. Billing = GB-seconds
+      Timeout: 300                    # hard kill after 5 min (default is only 3s; API loops need room)
+
+      # Become process.env.* inside the function. !Ref pulls the value of a
+      # template Parameter, so behavior is tunable at deploy time without code changes.
       Environment:
         Variables:
           TAG_KEY: App
           TAG_VALUE: POC-Housekeeping
           KEEP_LATEST: !Ref KeepLatest
           DRY_RUN: !Ref DryRun
+
+      # Statements appended to the auto-generated EXECUTION ROLE - what the
+      # function is allowed to do at runtime. Sid = statement label, free text.
       Policies:
         - Statement:
+            # Read-only listing calls. Describe* can't be scoped to specific
+            # resources - IAM requires Resource "*" for them. Harmless: read-only.
             - Sid: DescribeIsAccountWide
               Effect: Allow
               Action:
                 - ec2:DescribeImages
                 - ec2:DescribeInstances
               Resource: "*"
+            # The destructive permission, double-fenced:
+            #   Resource narrows it to AMIs in this region (!Sub fills in the
+            #   region; images have no account ID in their ARN, hence "::"),
+            #   Condition further requires the AMI to carry tag App=POC-Housekeeping.
+            # Even buggy code cannot deregister an untagged AMI - IAM refuses.
             - Sid: DeregisterTaggedAmisOnly
               Effect: Allow
               Action:
@@ -56,26 +76,38 @@ Resources:
               Condition:
                 StringEquals:
                   aws:ResourceTag/App: POC-Housekeeping
+            # Snapshots inherit no tags from the AMI, so no tag condition here.
+            # Code only deletes snapshots referenced by an AMI it just deregistered.
             - Sid: DeleteSnapshots
               Effect: Allow
               Action:
                 - ec2:DeleteSnapshot
               Resource: !Sub arn:aws:ec2:${AWS::Region}::snapshot/*
+
+      # Triggers. Each entry expands into an AWS::Events::Rule on the default
+      # event bus + a permission allowing EventBridge to invoke this function.
       Events:
-        AmiBecameAvailable:
+        AmiBecameAvailable:           # logical name of this trigger
           Type: EventBridgeRule
           Properties:
+            # Match filter over every event on the bus. All three must match.
+            # Values are lists = "any of these" (we list one each).
             Pattern:
               source:
-                - aws.ec2
+                - aws.ec2                   # events emitted by the EC2 service
               detail-type:
-                - EC2 AMI State Change
+                - EC2 AMI State Change      # this specific event kind
               detail:
                 State:
-                  - available
+                  - available               # only when the AMI finished creating
+            # If invoking the Lambda fails (throttle/5xx), EventBridge retries twice.
             RetryPolicy:
               MaximumRetryAttempts: 2
 
+  # Pre-create the log group Lambda will write to (name must match
+  # /aws/lambda/<FunctionName>). If we let Lambda auto-create it, logs are
+  # kept FOREVER; declaring it here sets a 30-day retention and makes
+  # `sam delete` clean it up with the rest of the stack.
   AmiHousekeepingLogGroup:
     Type: AWS::Logs::LogGroup
     Properties:
